@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/src/style.css"></head>
+<body><div id="app">Application UI outside exported report</div><script type="module">
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
+import { renderMermaidBlocks } from '/src/mermaid-preview.js';
+import { rasterizeDiagram } from '/src/diagram-export.js';
+import { pdfPageSlices, wordArchive } from '/src/document-export.js';
+import { normalizeMarkdown, cjkStrong } from '/src/markdown-rendering.js';
+import { createDocxBase64 } from '/src/docx-export.js';
+const { report } = await (await fetch('/verify-input')).json();
+const renderer = await (await fetch('/verify-source')).text();
+// Execute the actual production export functions with the specified report.
+const source = renderer.slice(renderer.indexOf('const PDF_SAFE_STYLE_ID'), renderer.indexOf('async function exportDocument('));
+marked.use({ extensions: [cjkStrong], renderer: { code(code, info) {
+  const escaped = code.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  return `<pre><code${info?.trim().toLowerCase() === 'mermaid' ? ' class="language-mermaid"' : ''}>${escaped}</code></pre>`;
+} } });
+const upload = async (name, base64, metadata) => {
+  const response = await fetch('/verify-output', { method: 'POST', body: JSON.stringify({ name, base64, metadata }) });
+  if (!response.ok) throw new Error(await response.text());
+};
+let capture = 0;
+const metadata = [];
+const captureCanvas = async (root, options) => {
+  metadata.push({ capture: ++capture, tag: root.className, width: root.getBoundingClientRect().width, height: root.getBoundingClientRect().height, scrollHeight: root.scrollHeight });
+  const canvas = await html2canvas(root, options);
+  await upload(`capture-${capture}.png`, canvas.toDataURL('image/png').split(',')[1]);
+  metadata.at(-1).canvas = [canvas.width, canvas.height];
+  return canvas;
+};
+try {
+  const diagrams = async (svg) => {
+    const result = await rasterizeDiagram(svg);
+    await upload(`diagram-${++capture}.png`, result.src.split(',')[1]);
+    return result;
+  };
+  const run = new Function('html2canvas', 'jsPDF', 'DOMPurify', 'marked', 'renderMermaidBlocks', 'documentText', 'rasterizeDiagram', 'pdfPageSlices', 'normalizeMarkdown', `${source}\nreturn createPdfBase64();`);
+  await upload('report.pdf', await run(captureCanvas, jsPDF, DOMPurify, marked, renderMermaidBlocks, () => report, diagrams, pdfPageSlices, normalizeMarkdown));
+  const nativeWord = new Function('html2canvas', 'jsPDF', 'DOMPurify', 'marked', 'renderMermaidBlocks', 'documentText', 'rasterizeDiagram', 'pdfPageSlices', 'normalizeMarkdown', 'createDocxBase64', `${source}\nreturn withExportRoot(createDocxBase64);`);
+  await upload('report.docx', await nativeWord(captureCanvas, jsPDF, DOMPurify, marked, renderMermaidBlocks, () => report, diagrams, pdfPageSlices, normalizeMarkdown, createDocxBase64));
+  await upload('metadata.json', null, metadata);
+  window.verifyResult = { success: true, metadata };
+} catch (error) {
+  window.verifyResult = { success: false, error: error.stack };
+  await upload('error.json', null, window.verifyResult);
+}
+</script></body></html>

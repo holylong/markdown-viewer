@@ -1,0 +1,19 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/gen/schemas
+
+# Local verification output and private development notes
+artifacts/
+*.log
+tauri-close-test.png
+codex-session-*.md
+docs/cosmic-panda-*.md
+docs/kind-wizard-*.md
+docs/playful-garden-*.md
+商业化方案.md
+.env
+.env.*
+!.env.example
+*.pem
+*.key
