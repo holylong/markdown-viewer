@@ -2,6 +2,8 @@
 
 基于 Tauri、Vite 和 CodeMirror 的桌面 Markdown 编辑器。
 
+![Markdown Viewer 分屏编辑与 Mermaid 图表预览](docs/images/markdown-viewer.png)
+
 ## 功能
 
 - 编辑、分栏预览和独立预览模式
