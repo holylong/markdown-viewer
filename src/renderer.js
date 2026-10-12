@@ -14,6 +14,7 @@ import { pdfPageSlices } from "./document-export.js";
 import { rasterizeDiagram } from "./diagram-export.js";
 import { normalizeMarkdown, cjkStrong } from "./markdown-rendering.js";
 import { createContextMenu } from "./context-menu.js";
+import { createScrollMemory, clampScrollTop, maxScrollTop } from "./scroll-memory.js";
 import bash from "highlight.js/lib/languages/bash";
 import c from "highlight.js/lib/languages/c";
 import cpp from "highlight.js/lib/languages/cpp";
@@ -286,6 +287,12 @@ let activeSidebarPanel = SIDEBAR_PANELS.includes(localStorage.getItem(SIDEBAR_PA
   : "files";
 let splitRatio = Number.parseFloat(localStorage.getItem(SPLIT_RATIO_KEY)) || 50;
 let closeRequestPending = false;
+// The editor view and the preview pane are single shared DOM nodes, so without
+// extra bookkeeping every tab would inherit the scroll offset of the document
+// that was scrolled last. Each document keeps its own remembered position.
+const scrollMemory = createScrollMemory();
+const editorScrollSnapshots = new Map();
+let previewRestorePending = null;
 
 function basename(path) {
   const parts = path.split(/[\\/]/);
@@ -478,10 +485,103 @@ async function renderPreview() {
     return;
   }
   const rendered = marked.parse(normalizeMarkdown(documentText(document)));
+  // Replacing the preview HTML resets its scroll offset, so keep the previous
+  // position for an in-place re-render and the remembered one for a tab switch.
+  const inPlaceScroll = elements.markdown.scrollTop;
   elements.markdown.innerHTML = DOMPurify.sanitize(rendered, {
     USE_PROFILES: { html: true },
   });
+  const restoring = previewRestorePending === document.id;
+  if (restoring) previewRestorePending = null;
+  const targetScroll = restoring ? scrollMemory.read(document.id).preview : inPlaceScroll;
+  applyPreviewScroll(targetScroll);
   await renderMermaidBlocks(elements.markdown, currentTheme, () => revision === previewRevision);
+  // Diagram rendering changes the pane height, so re-apply the remembered offset.
+  if (revision === previewRevision) applyPreviewScroll(targetScroll);
+}
+
+function rememberDocumentScroll(id) {
+  if (id === null || id === undefined) return;
+  const previous = scrollMemory.read(id);
+  const pane = elements.markdown;
+  const editorScroller = editorView.scrollDOM;
+  // Hidden panes report a scroll offset of 0; keep the remembered value then.
+  const preview = pane.clientHeight > 0 ? pane.scrollTop : previous.preview;
+  const editor = editorScroller && editorScroller.clientHeight > 0 ? editorScroller.scrollTop : previous.editor;
+  scrollMemory.save(id, { editor, preview });
+  const snapshot = editorScroller && editorScroller.clientHeight > 0 ? captureEditorScrollSnapshot() : null;
+  if (snapshot) editorScrollSnapshots.set(id, snapshot);
+}
+
+function captureEditorScrollSnapshot() {
+  try {
+    return editorView.scrollSnapshot();
+  } catch {
+    // scrollSnapshot is only meaningful for a laid-out editor.
+    return null;
+  }
+}
+
+function resetEditorScrollToTop() {
+  const editorScroller = editorView.scrollDOM;
+  if (editorScroller) {
+    editorScroller.scrollTop = 0;
+    editorScroller.scrollLeft = 0;
+  }
+  editorView.requestMeasure();
+}
+
+function applyEditorScroll(position) {
+  const editorScroller = editorView.scrollDOM;
+  if (!editorScroller) return;
+  editorScroller.scrollTop = clampScrollTop(
+    position,
+    maxScrollTop(editorScroller.scrollHeight, editorScroller.clientHeight),
+  );
+}
+
+function restoreEditorScroll(id) {
+  const snapshot = id === null || id === undefined ? null : editorScrollSnapshots.get(id);
+  if (snapshot) {
+    try {
+      // A snapshot encodes both the line and the pixel offset, so it survives
+      // variable line heights and rendered diagrams.
+      editorView.dispatch({ effects: snapshot });
+    } catch {
+      // A snapshot only applies to the document it was taken from.
+      resetEditorScrollToTop();
+    }
+  } else {
+    // No snapshot (for example the first time this tab is shown): fall back to
+    // the remembered pixel offset, or the top of the document.
+    const remembered = id === null || id === undefined ? 0 : scrollMemory.read(id).editor;
+    resetEditorScrollToTop();
+    // The pixel fallback needs a measured editor, so wait for CodeMirror's own
+    // measure pass and skip it if the user switched tabs again in the meantime.
+    if (remembered > 0) {
+      requestAnimationFrame(() => {
+        if (activeDocumentId === id) applyEditorScroll(remembered);
+      });
+    }
+  }
+  // CodeMirror replays the last observed scroll offset whenever the editor
+  // regains focus at offset 0, which would otherwise resurrect the document
+  // that was scrolled before this one.
+  const inputState = editorView.inputState;
+  if (inputState) {
+    inputState.lastScrollTop = 0;
+    inputState.lastScrollLeft = 0;
+  }
+}
+
+function applyPreviewScroll(position) {
+  const pane = elements.markdown;
+  pane.scrollTop = clampScrollTop(position, maxScrollTop(pane.scrollHeight, pane.clientHeight));
+}
+
+function forgetDocumentScroll(id) {
+  scrollMemory.forget(id);
+  editorScrollSnapshots.delete(id);
 }
 
 function switchDocument(id, { focus = true } = {}) {
@@ -489,13 +589,26 @@ function switchDocument(id, { focus = true } = {}) {
   if (!document) return;
 
   clearTimeout(renderTimer);
+  const changed = activeDocumentId !== id;
+  if (changed && activeDocumentId !== null) rememberDocumentScroll(activeDocumentId);
   activeDocumentId = id;
-  editorView.setState(document.state);
+  if (!changed) {
+    // Re-activating the current tab must not rewind it to a stale position.
+    if (focus && elements.workspace.dataset.view !== "preview") {
+      requestAnimationFrame(() => editorView.focus());
+    }
+    return;
+  }
   elements.empty.hidden = true;
   elements.workspace.hidden = false;
   elements["tabs-bar"].hidden = false;
   elements.statusbar.hidden = false;
   setDocumentActionsEnabled(true);
+  // Restore only after the panes are visible, otherwise they have no layout
+  // and every remembered offset would clamp to zero.
+  editorView.setState(document.state);
+  restoreEditorScroll(id);
+  previewRestorePending = id;
   renderPreview();
   renderTabs();
   renderFileTree();
@@ -510,8 +623,10 @@ function switchDocument(id, { focus = true } = {}) {
 
 function showEmptyState() {
   activeDocumentId = null;
+  previewRestorePending = null;
   clearTimeout(renderTimer);
   editorView.setState(createEditorState(""));
+  restoreEditorScroll(null);
   elements.empty.hidden = false;
   elements.workspace.hidden = true;
   elements["tabs-bar"].hidden = true;
@@ -707,7 +822,10 @@ async function closeDocument(id) {
   }
 
   documents.splice(index, 1);
+  forgetDocumentScroll(target.id);
   if (target.id === activeDocumentId) {
+    // Clear first so the closed document is not remembered again on switch.
+    activeDocumentId = null;
     const next = documents[Math.min(index, documents.length - 1)];
     if (next) switchDocument(next.id);
     else showEmptyState();
@@ -763,6 +881,7 @@ function updateStatusBar() {
 
 function setView(mode) {
   const validMode = ["edit", "split", "preview"].includes(mode) ? mode : "split";
+  rememberDocumentScroll(activeDocumentId);
   elements.workspace.dataset.view = validMode;
   for (const [buttonId, buttonMode] of [
     ["view-edit-btn", "edit"],
@@ -779,7 +898,13 @@ function setView(mode) {
     button.setAttribute("aria-pressed", String(active));
   }
   localStorage.setItem("mdv-view", validMode);
-  if (validMode !== "edit" && activeDocument()) renderPreview();
+  const document = activeDocument();
+  if (document && validMode !== "edit") {
+    previewRestorePending = document.id;
+    renderPreview();
+  }
+  // A hidden editor pane loses its offset, so re-apply the remembered one.
+  if (document && validMode !== "preview") restoreEditorScroll(document.id);
   if (validMode !== "preview" && activeDocument()) {
     requestAnimationFrame(() => editorView.focus());
   }

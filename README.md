@@ -10,6 +10,7 @@
 - Mermaid 图表渲染
 - PDF 导出与 Word（DOCX）导出，包含图表图片
 - 多文档标签、文件夹浏览和文档右键菜单
+- 每个文档独立记住编辑与预览滚动位置
 - 中文文本与主题切换
 
 ## 开发
@@ -32,14 +33,14 @@ Windows 下也可以运行 `build.cmd --exe --skip-install`，仅生成 EXE。�
 ## 验证
 
 ```sh
-node --experimental-test-module-mocks --test src/mermaid-preview.test.js src/document-export.test.js src/markdown-rendering.test.js
+node --experimental-test-module-mocks --test src/mermaid-preview.test.js src/document-export.test.js src/markdown-rendering.test.js src/scroll-memory.test.js
 ```
 
 公开示例位于 `docs/mermaid-preview.md` 和 `docs/export-sample 中文示例.md`。
 
 浏览器导出验证：运行 `node scripts/verify-export.mjs`，然后打开输出的本地地址。生成结果保存在 `artifacts/export-verification`。DOCX 检查脚本 `scripts/verify-docx.py` 需要 Python 和 Pillow；`scripts/verify-word.ps1` 需要 Windows 和 Microsoft Word。
 
-桌面自动验证脚本连接开启调试端口的 WebView2（9224），浏览器自动验证脚本使用 9223。这些端口仅用于本地测试。
+桌面自动验证脚本连接开启调试端口的 WebView2（9224），浏览器自动验证脚本使用 9223。这些端口仅用于本地测试。多文档滚动隔离可用 `node scripts/verify-scroll-desktop.mjs` 在 9224 端口上验证。
 
 ## 数据与导出
 
