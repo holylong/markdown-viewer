@@ -1,0 +1,31 @@
+name: Update release checksums
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/release-checksums.yml']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to verify
+        required: true
+        default: v0.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  checksums:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag || 'v0.1.0' }}
+    steps:
+      - name: Download published installers and update checksums
+        run: |
+          gh release download "$RELEASE_TAG" --pattern '*.exe' --pattern '*.msi' --dir installers
+          test "$(find installers -maxdepth 1 -type f | wc -l)" -eq 2
+          (cd installers && sha256sum *.exe *.msi > SHA256SUMS.txt)
+          gh release upload "$RELEASE_TAG" installers/SHA256SUMS.txt --clobber

@@ -62,6 +62,10 @@ jobs:
           }
           Copy-Item -LiteralPath $setup[0].FullName -Destination release-assets
           Copy-Item -LiteralPath $msi[0].FullName -Destination release-assets
+          # GitHub normalizes spaces in uploaded asset names to dots.
+          Get-ChildItem release-assets | ForEach-Object {
+            Rename-Item -LiteralPath $_.FullName -NewName ($_.Name -replace ' ', '.')
+          }
           $checksums = Get-ChildItem release-assets | Sort-Object Name | ForEach-Object {
             $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
             '{0}  {1}' -f $hash.Hash.ToLowerInvariant(), $_.Name
