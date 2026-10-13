@@ -4,6 +4,8 @@
 
 ![Markdown Viewer 分屏编辑与 Mermaid 图表预览](docs/images/markdown-viewer.png)
 
+Windows 安装包可从 [GitHub Releases](https://github.com/holylong/markdown-viewer/releases/latest) 下载，推荐使用 `x64-setup.exe`。
+
 ## 功能
 
 - 编辑、分栏预览和独立预览模式
@@ -30,6 +32,8 @@ npm run tauri -- build
 ```
 
 Windows 下也可以运行 `build.cmd --exe --skip-install`，仅生成 EXE。默认输出目录为 `src-tauri/target/release`。运行 `build.cmd --skip-install` 可同时生成安装包，输出位于 `src-tauri/target/release/bundle`。
+
+推送与 `src-tauri/tauri.conf.json` 版本一致的 `v*` 标签时，GitHub Actions 会运行测试、构建 Windows x64 EXE/MSI 安装包，并发布到 GitHub Releases。发布说明位于 `docs/releases/<标签>.md`。
 
 ## 验证
 

@@ -1,0 +1,81 @@
+name: Publish Windows installers
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Check release version
+        run: |
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          if ($env:GITHUB_REF_NAME -ne "v$($config.version)") {
+            throw 'Release tag must match the Tauri version.'
+          }
+          if (!(Test-Path "docs/releases/$env:GITHUB_REF_NAME.md")) {
+            throw 'Release notes are missing.'
+          }
+      - name: Set up Rust
+        run: |
+          rustup update stable --no-self-update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: windows-release-${{ hashFiles('src-tauri/Cargo.lock') }}
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: node --experimental-test-module-mocks --test src/*.test.js
+      - name: Build Windows installers
+        run: npm run tauri -- build --bundles nsis,msi --ci
+      - name: Collect installers and checksums
+        run: |
+          New-Item -ItemType Directory -Path release-assets | Out-Null
+          $setup = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe)
+          $msi = @(Get-ChildItem src-tauri/target/release/bundle/msi/*.msi)
+          if ($setup.Count -ne 1 -or $msi.Count -ne 1) {
+            throw 'Expected one EXE installer and one MSI installer.'
+          }
+          Copy-Item -LiteralPath $setup[0].FullName -Destination release-assets
+          Copy-Item -LiteralPath $msi[0].FullName -Destination release-assets
+          $checksums = Get-ChildItem release-assets | Sort-Object Name | ForEach-Object {
+            $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
+            '{0}  {1}' -f $hash.Hash.ToLowerInvariant(), $_.Name
+          }
+          Set-Content release-assets/SHA256SUMS.txt -Value $checksums -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: release-assets/*
+          if-no-files-found: error
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $assets = @(Get-ChildItem release-assets | ForEach-Object { $_.FullName })
+          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "Markdown Viewer $env:GITHUB_REF_NAME" --notes-file "docs/releases/$env:GITHUB_REF_NAME.md" --latest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
