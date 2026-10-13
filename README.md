@@ -11,6 +11,7 @@
 - PDF 导出与 Word（DOCX）导出，包含图表图片
 - 多文档标签、文件夹浏览和文档右键菜单
 - 每个文档独立记住编辑与预览滚动位置
+- 分屏模式下编辑区与预览区按滚动进度双向同步
 - 中文文本与主题切换
 
 ## 开发
@@ -28,12 +29,12 @@ npm run tauri -- dev
 npm run tauri -- build
 ```
 
-Windows 下也可以运行 `build.cmd --exe --skip-install`，仅生成 EXE。默认输出目录为 `src-tauri/target/release`。
+Windows 下也可以运行 `build.cmd --exe --skip-install`，仅生成 EXE。默认输出目录为 `src-tauri/target/release`。运行 `build.cmd --skip-install` 可同时生成安装包，输出位于 `src-tauri/target/release/bundle`。
 
 ## 验证
 
 ```sh
-node --experimental-test-module-mocks --test src/mermaid-preview.test.js src/document-export.test.js src/markdown-rendering.test.js src/scroll-memory.test.js
+node --experimental-test-module-mocks --test src/mermaid-preview.test.js src/document-export.test.js src/markdown-rendering.test.js src/scroll-memory.test.js src/scroll-sync.test.js
 ```
 
 公开示例位于 `docs/mermaid-preview.md` 和 `docs/export-sample 中文示例.md`。

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-// Verifies per-document scroll memory in the real desktop WebView: scrolling one
-// document must not move another one, and each tab must return to where it was.
+// Verifies wheel synchronization and per-document scroll memory in the desktop
+// WebView: both panes follow user input and each tab returns to where it was.
 const directory = path.resolve("artifacts/scroll-verification");
 await mkdir(directory, { recursive: true });
 const longPath = path.join(directory, "long.md");
@@ -54,6 +54,14 @@ const scrollState = () => evaluate(`(() => {
     active: document.querySelector('.tab.active .tab-label')?.textContent || null,
   };
 })()`);
+const panesAligned = () => `(() => {
+  const editor = document.querySelector('.cm-scroller');
+  const preview = document.querySelector('#markdown');
+  const editorRange = editor.scrollHeight - editor.clientHeight;
+  const previewRange = preview.scrollHeight - preview.clientHeight;
+  return editorRange > 0 && previewRange > 0 &&
+    Math.abs(editor.scrollTop / editorRange - preview.scrollTop / previewRange) < 0.005;
+})()`;
 const activate = (label) => evaluate(`(() => {
   const tab = [...document.querySelectorAll('.tab')].find(item => item.querySelector('.tab-label').textContent === ${JSON.stringify(label)});
   tab.click();
@@ -83,8 +91,13 @@ assert.deepEqual(await scrollState(), { preview: 0, editor: 0, active: "short.md
 await activate("long.md");
 await pause();
 await wheel("#markdown", 900);
+await waitFor(panesAligned());
+const previewDriven = await scrollState();
+assert.ok(previewDriven.editor > 100, "preview wheel scrolling must also move the editor");
 await wheel(".cm-scroller", 700);
+await waitFor(panesAligned());
 const longScrolled = await scrollState();
+assert.ok(longScrolled.preview > previewDriven.preview, "editor wheel scrolling must also move the preview");
 assert.ok(longScrolled.preview > 100, `preview should scroll, got ${longScrolled.preview}`);
 assert.ok(longScrolled.editor > 100, `editor should scroll, got ${longScrolled.editor}`);
 

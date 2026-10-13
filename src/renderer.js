@@ -15,6 +15,7 @@ import { rasterizeDiagram } from "./diagram-export.js";
 import { normalizeMarkdown, cjkStrong } from "./markdown-rendering.js";
 import { createContextMenu } from "./context-menu.js";
 import { createScrollMemory, clampScrollTop, maxScrollTop } from "./scroll-memory.js";
+import { createScrollSync } from "./scroll-sync.js";
 import bash from "highlight.js/lib/languages/bash";
 import c from "highlight.js/lib/languages/c";
 import cpp from "highlight.js/lib/languages/cpp";
@@ -444,6 +445,10 @@ const editorView = new EditorView({
   state: createEditorState(""),
 });
 
+const scrollSync = createScrollSync(editorView.scrollDOM, elements.markdown, () =>
+  activeDocumentId !== null && !elements.workspace.hidden && elements.workspace.dataset.view === "split",
+);
+
 function handleEditorUpdate(update) {
   const document = activeDocument();
   if (!document) return;
@@ -541,6 +546,7 @@ function applyEditorScroll(position) {
 }
 
 function restoreEditorScroll(id) {
+  scrollSync.reset();
   const snapshot = id === null || id === undefined ? null : editorScrollSnapshots.get(id);
   if (snapshot) {
     try {
@@ -575,6 +581,7 @@ function restoreEditorScroll(id) {
 }
 
 function applyPreviewScroll(position) {
+  scrollSync.reset();
   const pane = elements.markdown;
   pane.scrollTop = clampScrollTop(position, maxScrollTop(pane.scrollHeight, pane.clientHeight));
 }
@@ -880,6 +887,7 @@ function updateStatusBar() {
 }
 
 function setView(mode) {
+  scrollSync.reset();
   const validMode = ["edit", "split", "preview"].includes(mode) ? mode : "split";
   rememberDocumentScroll(activeDocumentId);
   elements.workspace.dataset.view = validMode;
